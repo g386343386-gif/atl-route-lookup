@@ -779,7 +779,7 @@ h2 { font-size: .99rem; margin: 0; }
   box-shadow: 0 1px 3px #20373140;
 }
 .route-label.point span { border-style: dashed; }
-.route-label.selected span { color: #fff; background: #203b32; border-color: #203b32; }
+.route-label.selected span { background: #fff; border: 2px solid var(--dsp); }
 .route-label:focus-visible span { outline: 2px solid #141414; }
 .route-shape:focus-visible { outline: none; stroke: #152923; stroke-width: 3; }
 .map-popup h3 { margin: 0 13px 5px 0; font-size: 1.15rem; }
@@ -917,6 +917,7 @@ const colors = {
   联合车队: "#808746", SEVEN: "#ad5481", JONES: "#a36e24",
   EBGENERAL: "#4189d0", XUTRANSPORTATION: "#625aae",
 };
+const neutralRouteColor = "#6e7974";
 const $ = (id) => document.getElementById(id);
 const map = L.map("map", { zoomSnap: 0.25, zoomDelta: 0.75, minZoom: 6, maxZoom: 17 })
   .setView([33.9, -84.27], 9);
@@ -1010,11 +1011,18 @@ function makePopup(route, boundary) {
 
 function styleEntry(entry) {
   const selected = state.route === entry.route.id;
+  const color = selected ? entry.color : neutralRouteColor;
   return {
-    color: entry.color, weight: selected ? 3 : 1.1, opacity: selected ? 1 : 0.87,
-    fillColor: entry.color, fillOpacity: selected ? 0.63 : state.route == null ? 0.42 : 0.25,
+    color, weight: selected ? 3 : 1.1, opacity: selected ? 1 : 0.55,
+    fillColor: color, fillOpacity: selected ? 0.63 : 0,
     className: "route-shape",
   };
+}
+
+function stylePin(entry) {
+  const selected = state.route === entry.route.id;
+  const color = selected ? entry.color : neutralRouteColor;
+  return { color, fillColor: color, fillOpacity: selected ? 0.8 : 0.35 };
 }
 
 function openEntry(entry, at = entry.anchor) {
@@ -1047,8 +1055,7 @@ function makeEntry(route, zip, boundary, point) {
     }).on("click", (event) => selectRoute(route.id, entry, event.latlng, false));
   } else if (point) {
     entry.pin = L.circleMarker(point, {
-      radius: 6, color: entry.color, fillColor: entry.color,
-      fillOpacity: 0.8, dashArray: "2 2", weight: 2,
+      ...stylePin(entry), radius: 6, dashArray: "2 2", weight: 2,
     }).on("click", () => selectRoute(route.id, entry, point, false));
   }
   return entry;
@@ -1090,7 +1097,7 @@ function renderLabels() {
     used.push(box);
     showingRoutes.add(entry.route.id);
     const text = node("span", entry.route.route);
-    text.style.setProperty("--dsp", entry.color);
+    text.style.setProperty("--dsp", selected ? entry.color : neutralRouteColor);
     const icon = L.divIcon({
       html: text, iconSize: [0, 0], iconAnchor: [0, -offset],
       className: `route-label${selected ? " selected" : ""}${entry.shape ? "" : " point"}`,
@@ -1103,12 +1110,22 @@ function renderLabels() {
 
 function selectRoute(id, entry, position, focusMap) {
   state.route = id;
+  updateNotice("");
   for (const [routeId, button] of routeButtons) {
     button.setAttribute("aria-pressed", String(routeId === id));
   }
   for (const item of active) {
     item.shape?.setStyle(styleEntry(item));
-    if (item.route.id === id) item.shape?.bringToFront();
+    item.pin?.setStyle(stylePin(item));
+    if (item.route.id === id) {
+      item.shape?.bringToFront();
+      item.pin?.bringToFront();
+    }
+  }
+  if (id == null) {
+    map.closePopup();
+    renderLabels();
+    return;
   }
   const routeEntries = entries.get(id);
   if (focusMap) {
@@ -1148,7 +1165,9 @@ function routeButton(route) {
   button.append(node("i", null, "dot"), node("strong", route.route),
     node("small", route.zips.join(" · ")),
     node("em", entries.get(route.id).some((entry) => !entry.shape) ? "缺边界" : ""));
-  button.addEventListener("click", () => selectRoute(route.id, null, null, true));
+  button.addEventListener("click", () => {
+    selectRoute(state.route === route.id ? null : route.id, null, null, true);
+  });
   routeButtons.set(route.id, button);
   return button;
 }
@@ -1174,7 +1193,7 @@ function renderFiltered(refit) {
   pins.clearLayers();
   for (const entry of active) {
     if (entry.shape) shapes.addLayer(entry.shape.setStyle(styleEntry(entry)));
-    if (entry.pin) pins.addLayer(entry.pin);
+    if (entry.pin) pins.addLayer(entry.pin.setStyle(stylePin(entry)));
   }
   if (refit) fit(active, state.dsp || state.difficulty || query ? 12 : 10.5);
   renderLabels();
