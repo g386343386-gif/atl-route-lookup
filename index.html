@@ -736,7 +736,7 @@ h2 { font-size: .99rem; margin: 0; }
 .empty { margin: 9px 0; color: var(--muted); font-size: .88rem; }
 .map-frame { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; }
 #map { min-height: 360px; z-index: 0; background: #e7ece8; font-family: inherit; }
-.base-tiles { filter: saturate(.30) contrast(.86) brightness(1.13); }
+.base-tiles { filter: saturate(.38) contrast(1.06); }
 .map-tools {
   position: absolute; z-index: 450; top: 14px; right: 14px;
   display: grid; gap: 6px; justify-items: end;
@@ -773,10 +773,10 @@ h2 { font-size: .99rem; margin: 0; }
 .route-label { background: transparent; border: 0; }
 .route-label span {
   display: block; box-sizing: border-box; width: max-content; min-width: 30px;
-  transform: translate(-50%, -50%); text-align: center; color: #162824; background: #fffffff4;
+  transform: translate(-50%, -50%); text-align: center; color: #162824; background: #ffffffdc;
   border: 1px solid var(--dsp); border-radius: 4px; padding: 0 3px;
   font-size: 11px; line-height: 15px; font-weight: 800; white-space: nowrap;
-  box-shadow: 0 1px 3px #20373140;
+  box-shadow: 0 1px 2px #20373126;
 }
 .route-label.point span { border-style: dashed; }
 .route-label.selected span { background: #fff; border: 2px solid var(--dsp); }
@@ -827,8 +827,8 @@ h2 { font-size: .99rem; margin: 0; }
   <main class="workspace">
     <aside class="sidebar" aria-label="车队和路线筛选">
       <div class="search">
-        <label class="sr-only" for="query">搜索路线、邮编或分拣码</label>
-        <input id="query" type="search" placeholder="搜索路线、邮编或分拣码" autocomplete="off">
+        <label class="sr-only" for="query">搜索路线、邮编、地区或分拣码</label>
+        <input id="query" type="search" placeholder="搜索路线、邮编、地区或分拣码" autocomplete="off">
       </div>
       <section aria-labelledby="fleet-heading">
         <div class="section-heading">
@@ -848,8 +848,8 @@ h2 { font-size: .99rem; margin: 0; }
       <div id="map" aria-label="可缩放的路线地图"></div>
       <div class="map-tools">
         <div class="map-controls">
-          <button type="button" id="fit" title="将当前筛选结果全部显示在地图内">适配视野</button>
-          <button type="button" id="labels" aria-pressed="true">路线标签</button>
+          <button type="button" id="fit" aria-pressed="true" title="显示路线标签和当前筛选范围内的全部车队颜色，并调整视野">适配视野</button>
+          <button type="button" id="labels" aria-pressed="false" title="显示灰色边界和路线标签，点选路线后高亮">路线标签</button>
           <button type="button" id="locate-warehouse">定位仓库</button>
         </div>
         <details class="difficulty-tray">
@@ -932,7 +932,7 @@ map.getContainer().setAttribute("aria-label", "ATL 配送区域地图，使用�
 const shapes = L.layerGroup().addTo(map);
 const labels = L.layerGroup().addTo(map);
 const pins = L.layerGroup().addTo(map);
-const state = { dsp: "", difficulty: "", route: null, labels: true, query: "" };
+const state = { dsp: "", difficulty: "", route: null, mode: "overview", query: "" };
 const entries = new Map();
 const warehouseLocation = L.latLng(33.918671903163, -84.213473389025);
 const metersPerMile = 1609.344;
@@ -1011,18 +1011,19 @@ function makePopup(route, boundary) {
 
 function styleEntry(entry) {
   const selected = state.route === entry.route.id;
-  const color = selected ? entry.color : neutralRouteColor;
+  const overview = state.mode === "overview";
+  const color = selected || overview ? entry.color : neutralRouteColor;
   return {
-    color, weight: selected ? 3 : 1.1, opacity: selected ? 1 : 0.55,
-    fillColor: color, fillOpacity: selected ? 0.63 : 0,
+    color, weight: selected ? 3 : 1.1, opacity: selected ? 1 : overview ? 0.68 : 0.55,
+    fillColor: color, fillOpacity: selected ? 0.38 : overview ? 0.20 : 0,
     className: "route-shape",
   };
 }
 
 function stylePin(entry) {
   const selected = state.route === entry.route.id;
-  const color = selected ? entry.color : neutralRouteColor;
-  return { color, fillColor: color, fillOpacity: selected ? 0.8 : 0.35 };
+  const color = selected || state.mode === "overview" ? entry.color : neutralRouteColor;
+  return { color, fillColor: color, fillOpacity: selected ? 0.55 : 0.30 };
 }
 
 function openEntry(entry, at = entry.anchor) {
@@ -1048,15 +1049,15 @@ function makeEntry(route, zip, boundary, point) {
           path.addEventListener("keydown", (event) => {
             if (event.key !== "Enter" && event.key !== " ") return;
             event.preventDefault();
-            selectRoute(route.id, entry, entry.anchor, false);
+            toggleRoute(route.id, entry, entry.anchor);
           });
         });
       },
-    }).on("click", (event) => selectRoute(route.id, entry, event.latlng, false));
+    }).on("click", (event) => toggleRoute(route.id, entry, event.latlng));
   } else if (point) {
     entry.pin = L.circleMarker(point, {
       ...stylePin(entry), radius: 6, dashArray: "2 2", weight: 2,
-    }).on("click", () => selectRoute(route.id, entry, point, false));
+    }).on("click", () => toggleRoute(route.id, entry, point));
   }
   return entry;
 }
@@ -1074,7 +1075,6 @@ function fit(entriesToShow, maxZoom = 12) {
 
 function renderLabels() {
   labels.clearLayers();
-  if (!state.labels) return;
   const used = [];
   const viewport = map.getSize();
   const candidates = active.filter((entry) => entry.anchor);
@@ -1103,14 +1103,19 @@ function renderLabels() {
       className: `route-label${selected ? " selected" : ""}${entry.shape ? "" : " point"}`,
     });
     L.marker(entry.anchor, { icon, keyboard: false, zIndexOffset: selected ? 1500 : 1000 })
-      .on("click", () => selectRoute(entry.route.id, entry, entry.anchor, false))
+      .on("click", () => toggleRoute(entry.route.id, entry, entry.anchor))
       .addTo(labels);
   }
 }
 
+function toggleRoute(id, entry, position, focusMap) {
+  if (state.route === id) selectRoute(null);
+  else selectRoute(id, entry, position, focusMap);
+}
+
 function selectRoute(id, entry, position, focusMap) {
   state.route = id;
-  updateNotice("");
+  updateNotice(filtered.length ? "" : "没有匹配的路线。");
   for (const [routeId, button] of routeButtons) {
     button.setAttribute("aria-pressed", String(routeId === id));
   }
@@ -1136,6 +1141,14 @@ function selectRoute(id, entry, position, focusMap) {
   const popupEntry = entry || routeEntries.find((item) => item.anchor);
   if (popupEntry) openEntry(popupEntry, position ?? popupEntry.anchor);
   else updateNotice("该路线的邮编暂无可定位的边界或坐标。");
+}
+
+function setMapMode(mode) {
+  state.mode = mode;
+  $("fit").setAttribute("aria-pressed", String(mode === "overview"));
+  $("labels").setAttribute("aria-pressed", String(mode === "labels"));
+  selectRoute(null);
+  if (mode === "overview") fit(active);
 }
 
 function addFleet(id, count) {
@@ -1165,9 +1178,7 @@ function routeButton(route) {
   button.append(node("i", null, "dot"), node("strong", route.route),
     node("small", route.zips.join(" · ")),
     node("em", entries.get(route.id).some((entry) => !entry.shape) ? "缺边界" : ""));
-  button.addEventListener("click", () => {
-    selectRoute(state.route === route.id ? null : route.id, null, null, true);
-  });
+  button.addEventListener("click", () => toggleRoute(route.id, null, null, true));
   routeButtons.set(route.id, button);
   return button;
 }
@@ -1179,7 +1190,8 @@ function renderFiltered(refit) {
   const query = state.query.toUpperCase().trim();
   filtered = routes.filter((route) => (!state.dsp || route.dsp === state.dsp)
     && (!state.difficulty || route.difficultyLevel === state.difficulty)
-    && (!query || [route.route, route.sort, route.dsp, ...route.zips].some((value) => value.toUpperCase().includes(query))));
+    && (!query || [route.route, route.sort, route.dsp, route.city, ...route.zips]
+      .some((value) => value?.toUpperCase().includes(query))));
   active = filtered.flatMap((route) => entries.get(route.id));
   const zipCount = new Set(active.map((entry) => entry.zip)).size;
   $("selection-count").textContent = `${filtered.length} 条`;
@@ -1224,7 +1236,7 @@ function start() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => renderFiltered(true), 140);
   });
-  $("fit").addEventListener("click", () => fit(active));
+  $("fit").addEventListener("click", () => setMapMode("overview"));
   const difficultyButtons = $("difficulty-options").querySelectorAll("button");
   for (const button of difficultyButtons) {
     button.addEventListener("click", () => {
@@ -1234,11 +1246,7 @@ function start() {
       renderFiltered(true);
     });
   }
-  $("labels").addEventListener("click", () => {
-    state.labels = !state.labels;
-    $("labels").setAttribute("aria-pressed", String(state.labels));
-    renderLabels();
-  });
+  $("labels").addEventListener("click", () => setMapMode("labels"));
   map.on("moveend resize", renderLabels);
   renderFiltered(true);
 }
